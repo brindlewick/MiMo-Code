@@ -2,6 +2,9 @@ type Definition = {
   [method: string]: (input: any) => any
 }
 
+// A worker that awaits at its top level before it calls listen() yields to the event loop, and since
+// Bun 1.4 a message that arrives then, before onmessage is set, is lost. So listen() says when the
+// worker is listening, and the client holds its requests until it hears that.
 export function listen(rpc: Definition) {
   onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
@@ -10,6 +13,7 @@ export function listen(rpc: Definition) {
       postMessage(JSON.stringify({ type: "rpc.result", result, id: parsed.id }))
     }
   }
+  postMessage(JSON.stringify({ type: "rpc.ready" }))
 }
 
 export function emit(event: string, data: unknown) {
@@ -22,9 +26,20 @@ export function client<T extends Definition>(target: {
 }) {
   const pending = new Map<number, (result: any) => void>()
   const listeners = new Map<string, Set<(data: any) => void>>()
+  const held: string[] = []
+  let ready = false
   let id = 0
+  const send = (message: string) => {
+    if (ready) target.postMessage(message)
+    else held.push(message)
+  }
   target.onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
+    if (parsed.type === "rpc.ready") {
+      ready = true
+      for (const message of held.splice(0)) target.postMessage(message)
+      return
+    }
     if (parsed.type === "rpc.result") {
       const resolve = pending.get(parsed.id)
       if (resolve) {
@@ -46,7 +61,7 @@ export function client<T extends Definition>(target: {
       const requestId = id++
       return new Promise((resolve) => {
         pending.set(requestId, resolve)
-        target.postMessage(JSON.stringify({ type: "rpc.request", method, input, id: requestId }))
+        send(JSON.stringify({ type: "rpc.request", method, input, id: requestId }))
       })
     },
     on<Data>(event: string, handler: (data: Data) => void) {

@@ -2,9 +2,10 @@ type Definition = {
   [method: string]: (input: any) => any
 }
 
-// A worker that awaits at its top level before it calls listen() yields to the event loop, and since
-// Bun 1.4 a message that arrives then, before onmessage is set, is lost. So listen() says when the
-// worker is listening, and the client holds its requests until it hears that.
+// The TUI worker (cli/cmd/tui/worker.ts) calls listen() only after an `await` at the top
+// level of its module. While that await is pending, the worker's event loop runs, and Bun 1.4
+// drops a message that arrives before onmessage is set (Bun 1.3.14 held it). So listen()
+// posts rpc.ready once onmessage is set, and client() holds its requests until it sees it.
 export function listen(rpc: Definition) {
   onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
